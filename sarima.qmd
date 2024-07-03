@@ -58,24 +58,31 @@ renv::activate()
 
 
 ```{r prepareEnvironment2}
-
-packages <- c("tidyverse","forecast","zoo","xts","fable","tsibble")
+packages <- c("tidyverse", "forecast", "zoo", "xts", "fabletools", "tsibble")
 
 # Function to install and load packages if not already installed
 installAndLoadPackages <- function(pkg) {
   if (!requireNamespace(pkg, quietly = TRUE)) {
-    install.packages(pkg)
+    install.packages(pkg, dependencies = TRUE)
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+      warning(paste("Package", pkg, "could not be installed."))
+    } else {
+      library(pkg, character.only = TRUE)
+    }
+  } else {
     library(pkg, character.only = TRUE)
   }
 }
 
+# Loop through packages and install/load them
 for (pkg in packages) {
   installAndLoadPackages(pkg)
 }
 
-# caret fails to load for unknown reason
-library(caret)
-renv::snapshot()
+# After installing/loading, snapshot the environment if using renv
+if (requireNamespace("renv", quietly = TRUE)) {
+  renv::snapshot()
+}
 
 # Set global options
 options(stringsAsFactors = FALSE) # Prevent automatic conversion of strings to factors
@@ -104,7 +111,7 @@ knitr::opts_chunk$set(
 ```{r}
 
 data_temp <- ts(AirPassengers, frequency = 12, start="1949")
-time_index <- as.yearmon(time(data_temp))
+time_index <- yearmon(time(data_temp))
 data <- xts(coredata(data_temp), order.by=time_index, frequency = frequency(data_temp))
 data_df <- as.data.frame(data)
 data_df$yearmonth <- as.yearmon(zoo::index(data))
@@ -279,23 +286,36 @@ abline(h = c(0, -1.96/sqrt(length(diff_log_data)), 1.96/sqrt(length(diff_log_dat
 ```{r}
 model <- Arima(train_data, order=c(5, 1, 6), seasonal=list(order=c(0, 1, 0), period=24))
 model
+
+
+is_invertible <- function(model) {
+  ar_roots <- abs(polyroot(c(1, -model$coef[grepl("ar", names(model$coef))])))
+  ma_roots <- abs(polyroot(c(1, model$coef[grepl("ma", names(model$coef))])))
+  sar_roots <- abs(polyroot(c(1, -model$coef[grepl("sar", names(model$coef))])))  
+  sma_roots <- abs(polyroot(c(1, model$coef[grepl("sma", names(model$coef))]))) 
+  
+  all(ar_roots > 1) && all(ma_roots > 1) && all(sar_roots > 1) && all(sma_roots > 1)
+}
+
+is_invertible(model)
+
 ```
 
 
 ## Forecasting
 
 ```{r}
-fmodel = training |> fabletools::model(fable::ARIMA(passengers ~ 1 + pdq(5,1,6) + PDQ(0,1,0)[24]))
+fmodel = training |> fabletools::model(fable::ARIMA(passengers ~ 0 + pdq(5,1,6) + PDQ(0,1,0)))
 
 fmodel|>
   forecast(h=validation_window) |> 
   autoplot(data_tb)
 
-# fitted_model = fitted(fmodel, h=validation_window)
-# 
-# fmodel |>
-#   fabletools::refit(test) |>
-#   accuracy()
+fitted_model = fitted(fmodel, h=validation_window)
+
+ fmodel |>
+  fabletools::refit(test) |>
+  accuracy()
 ```
 
 

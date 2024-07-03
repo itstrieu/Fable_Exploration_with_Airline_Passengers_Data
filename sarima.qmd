@@ -1,0 +1,318 @@
+---
+title: "Time Series Analysis with SARIMA"
+author: "Kathy Trieu"
+format: 
+  revealjs
+---
+
+# Introduction to Time Series Analysis
+
+-   **Definition**: A time series is a sequence of data points recorded at successive points in time.
+-   **Applications**:
+    -   Stock market analysis
+    -   Weather forecasting
+    -   Sales forecasting
+
+## Key Concepts in Time Series Analysis
+
+-   **Stationarity**: A stationary time series has statistical properties (mean, variance) that do not change over time.
+-   **Components of Time Series**:
+    -   **Trend**: Long-term movement in the data.
+    -   **Seasonality**: Regular pattern repeating over time.
+    -   **Residuals**: Random noise or irregular fluctuations.
+
+## Why Stationarity is Important {.smaller}
+
+-   **Definition**: Stationarity means that the properties of the time series do not change over time.
+-   **Importance**:
+    -   Many statistical models rely on the assumption that the data is stationary.
+    -   Easier to model and forecast.
+    -   Consistent mean and variance over time.
+-   **Achieving Stationarity**:
+    -   Differencing data
+    -   Log transforming data
+
+## What is Differencing?
+
+-   **Definition**: Differencing is a technique to make a non-stationary time series stationary.
+-   **Process**: Subtracting the previous observation from the current observation.
+-   **Formula**: $$\nabla x_t=x_t -x_{t-1}$$
+
+# Illustrative Example: Airline Passengers
+
+## Data
+
+
+```{r prepareEnvironment, include=FALSE}
+
+if(!require(renv)) install.packages("renv")
+
+# Initialize 'renv' if the lock file does not exist
+if (!file.exists("renv.lock")) {
+  renv::init()
+}
+
+renv::activate()
+
+```
+
+
+```{r prepareEnvironment2}
+
+packages <- c("tidyverse","forecast","zoo","xts","fable","tsibble")
+
+# Function to install and load packages if not already installed
+installAndLoadPackages <- function(pkg) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+for (pkg in packages) {
+  installAndLoadPackages(pkg)
+}
+
+# caret fails to load for unknown reason
+library(caret)
+renv::snapshot()
+
+# Set global options
+options(stringsAsFactors = FALSE) # Prevent automatic conversion of strings to factors
+options(scipen = 999) # Turn off scientific notation for numbers
+
+# Set custom RStudio settings when an interactive session is initiated
+if (interactive()) {
+  setHook("rstudio.sessionInit", function(newSession) {
+    if (newSession) {
+      # Arrange the RStudio layout and clear the console
+      rstudioapi::executeCommand("layoutDebugConsole")
+      rstudioapi::executeCommand("consoleClear")
+    }
+  })
+}
+
+knitr::opts_chunk$set(
+  echo = TRUE,    # Display code in the output
+  warning = FALSE, # Suppress warnings in the output
+  message = FALSE  # Suppress messages in the output
+)
+
+```
+
+
+```{r}
+
+data_temp <- ts(AirPassengers, frequency = 12, start="1949")
+time_index <- as.yearmon(time(data_temp))
+data <- xts(coredata(data_temp), order.by=time_index, frequency = frequency(data_temp))
+data_df <- as.data.frame(data)
+data_df$yearmonth <- as.yearmon(zoo::index(data))
+
+data_df$yearmonth <- yearmonth(data_df$yearmonth)
+data_tb <- as_tsibble(data_df, key = NULL) %>%
+  dplyr::mutate(
+    time = yearmonth,
+    passengers = V1,
+    log = log(passengers),
+    diff = difference(passengers),
+    diff_log = difference(log),
+                .keep="unused") %>%
+  as_tsibble(index = time) 
+
+data_tb <- data_tb[-1,]
+data_df <- as.data.frame(data_tb)
+
+plot(data,
+     major.format="%m-%Y",
+     main="Airline Passenger Data")
+
+```
+
+## Transformations
+
+```{r message=FALSE}
+plot1 <- ggplot(data_df) +
+  geom_line(aes(x = time, y = passengers)) +
+  ggtitle("Airline Passenger Data")
+
+# Plot the differenced data
+plot2 <- ggplot(data_df) +
+  geom_line(aes(x = time, y = diff)) +
+  ggtitle("Differenced Passenger Data")
+
+# Plot the log-transformed data
+plot3 <- ggplot(data_df) +
+  geom_line(aes(x = time, y = log)) +
+  ggtitle("Log Transformed Passenger Data")
+
+# Arrange the plots in a grid
+plots <- list(plot1, plot2, plot3)
+gridExtra::grid.arrange(grobs = plots, ncol = 1)
+```
+
+## Differenced Log Transformed Data
+
+```{r}
+ggplot(data_df) +
+  geom_line(aes(x = time, y = diff_log)) +
+  ggtitle("Differenced Log Passenger Data")
+```
+
+# Modeling
+
+## AutoRegressive (AR) Models
+
+-   **Definition**: AR($p$) models use the dependency between an observation and a number of lagged observations.
+-   **Formula**: $$x_t = \alpha + \phi_1 X_{t-1} + \phi_2 X_{t-2} + \ldots + \phi_p X_{t-p} + w_t$$ where $x_t$ is stationary and $w_t$ is white noise with mean 0 and variance $\sigma_w^2$
+
+## Moving Average (MA) Models
+
+-   **Definition**: MA($q$) models use the dependency between an observation and a residual error from a moving average model applied to lagged observations.
+-   **Formula**: $$ x_t = w_t + \theta_1w_{t-1} + \theta_2w_{t-2} + \ldots + \theta_qw_{t-q} $$ where $w_t$ is white noise
+
+## Introduction to ARMA {.smaller}
+
+-   **Definition**: An ARMA model combines these two processes to capture the autocorrelation in the data and the moving average of the error terms. The model is often denoted as ARMA($p$, $q$), where $p$ represents the order of the autoregressive process and $q$ represents the order of the moving average process.
+-   **Formula**: $$x_t=\alpha + \phi_1 X_{t-1} + \ldots + \phi_p X_{t-p} + w_t + \theta_1w_{t-1} + \ldots + \theta_qw_{t-q}$$
+-   The ARMA model can be seen as a regression of the present outcome on the past outcomes with correlated errors: $$x_t=\beta_0+\beta_1x_{t-1}+\ldots+\beta_px_{t-p}+\epsilon_t$$ where $$\epsilon_t=w_t+\theta_1w_{t-1} + \ldots + \theta_qw_{t-q}$$
+-   When $q=0$ the model is an AR($p$); when $p=0$ the model is an MA($q$)
+
+## Introduction to SARIMA {.smaller}
+
+-   **What is SARIMA**: Seasonal AutoRegressive Integrated Moving Average.
+-   **Model Components**:
+    -   **AR (AutoRegressive)**: Relationship between an observation and some lagged observations.
+    -   **I (Integrated)**: Differencing the data to make it stationary.
+    -   **MA (Moving Average)**: Relationship between an observation and a residual error from a moving average model.
+    -   **Seasonal Components**: Additive terms for seasonality.
+-   **Difference from ARIMA**: SARIMA includes seasonal components.
+
+## Steps to Build a SARIMA Model {.smaller}
+
+-   **Data Preparation**: Handle missing values, transformations (logarithm, differencing).
+-   **Identify Parameters**: (p, d, q, P, D, Q, m)
+    -   **p**: Number of lag observations in the model (AR part).
+    -   **d**: Number of times the raw observations are differenced (I part).
+    -   **q**: Size of the moving average window (MA part).
+    -   **P, D, Q, m**: Seasonal components.
+    -   Tools: ACF (Autocorrelation Function) and PACF (Partial Autocorrelation Function) plots.
+-   **Model Training and Validation**:
+    -   Fit the model to data.
+    -   Split data into training and test sets.
+
+## Understanding P/ACF Plots {.smaller}
+
+-   **ACF (Autocorrelation Function) Plot**: Measures the correlation between a variable and its lags.
+    -   **Interpretation**: Identifies the order of the MA component in the SARIMA model.
+    -   **Significance**: Significant peaks beyond the confidence interval indicate potential MA terms.
+-   **PACF (Partial Autocorrelation Function) Plot**: Measures the correlation between a variable and its lags, controlling for the values of the intermediate lags.
+    -   **Interpretation**: Identifies the order of the AR component in the SARIMA model.
+    -   **Significance**: Significant peaks beyond the confidence interval indicate potential AR terms.
+
+## Using P/ACF for SARIMA Modeling {.smaller}
+
+-   **Identifying AR Terms**:
+    -   Look for significant spikes in the PACF plot that decay exponentially.
+    -   The lag at which the PACF plot cuts off is the order of the AR component.
+-   **Identifying MA Terms**:
+    -   Look for significant spikes in the ACF plot that decay exponentially.
+    -   The lag at which the ACF plot cuts off is the order of the MA component.
+-   **Combining AR and MA Orders**:
+    -   Use information from both plots to determine the order of the ARIMA model.
+-   **Example**:
+    -   If the PACF plot shows a significant spike at lag 1 and the ACF plot shows a significant spike at lag 2, consider an ARIMA(1,0,2) model.
+
+## 
+
+```{r}
+diff_log_data <- diff(log(data))[-1]
+
+frequency <- 12
+
+acf_result <- acf(diff_log_data, lax.max=frequency*3, plot = FALSE)
+pacf_result <- pacf(diff_log_data,  lax.max=frequency*3, plot = FALSE)
+plot(acf_result, main = "Autocorrelation Function (ACF) Plot",
+     xlab = "Lag", ylab = "ACF")
+```
+
+##
+
+```{r}
+plot(pacf_result, main = "Partial Autocorrelation Function (PACF) Plot",
+     xlab = "Lag", ylab = "PACF")
+```
+
+
+## Fitting an ARMA Model 
+
+```{r}
+
+validation_window <- 12 
+end_date <- time(diff_log_data)[length(diff_log_data) - validation_window]
+
+```
+
+
+```{r}
+training <- data_tb |> filter_index(~ "1959-12")
+train_data <- training$passengers
+test <- data_tb |> filter_index("1960-01" ~ .)
+actual_values <- data_tb
+validation_window <- 12
+
+Arima(train_data, order=c(5, 1, 5), seasonal=list(order=c(0, 0, 0), period=0))
+
+```
+
+
+```{r}
+sacf_result <- acf(diff_log_data, type = "covariance", lag.max = frequency*2, plot = FALSE)
+plot(sacf_result$lag, sacf_result$acf, type = "h", lwd = 2, main = "Seasonal Autocorrelation Function (SACF) Plot",
+     xlab = "Lag", ylab = "SACF")
+abline(h = c(0, -1.96/sqrt(length(diff_log_data)), 1.96/sqrt(length(diff_log_data))), col = "blue", lty = 2)
+
+```
+
+## Introducing Seasonality
+
+```{r}
+model <- Arima(train_data, order=c(5, 1, 6), seasonal=list(order=c(0, 1, 0), period=24))
+model
+```
+
+
+## Forecasting
+
+```{r}
+fmodel = training |> fabletools::model(fable::ARIMA(passengers ~ 1 + pdq(5,1,6) + PDQ(0,1,0)[24]))
+
+fmodel|>
+  forecast(h=validation_window) |> 
+  autoplot(data_tb)
+
+# fitted_model = fitted(fmodel, h=validation_window)
+# 
+# fmodel |>
+#   fabletools::refit(test) |>
+#   accuracy()
+```
+
+
+## Selecting Seasonal Terms $P$, $Q$, $D$, and $m$ {.smaller}
+
+-   **Seasonal Autocorrelation Function (SACF) Plot**:
+    -   Measures the correlation between a variable and its seasonal lags.
+    -   Helps identify seasonal AR and MA terms.
+-   **Seasonal Differencing** $D$:
+    -   Difference the data by the seasonal lag to remove seasonality.
+    -   ( D ) is the number of times seasonal differencing is applied to achieve stationarity.
+-   **Selecting Seasonal AR($P$) and MA($Q$) Terms**:
+    -   Use SACF plot to identify significant spikes at seasonal lags.
+    -   Significant spikes in SACF plot beyond the confidence interval indicate potential seasonal AR($P$) and MA($Q$) terms.
+-   **Seasonal Period $m$**:
+    -   Represents the number of observations per season.
+    -   Determine $m$ based on the periodicity of the seasonal pattern in the data.
+-   **Example**:
+    -   If the SACF plot shows significant spikes at lags 12 and 24 (for monthly data), consider seasonal AR and MA terms at $P = 1$ and $Q = 1$ respectively with $m = 12$.
+    
